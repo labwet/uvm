@@ -1,6 +1,6 @@
-# UVM (Urbit Version Manager)
+# Urbit Version Manager
 
-UVM is a utility script for managing different releases of the Urbit runtime (vere).
+UVM is a utility script for managing different releases of the Urbit runtime ([Vere](https://github.com/urbit/vere/releases)).
 
 ## Features
 
