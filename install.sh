@@ -7,7 +7,7 @@ set -e
 
 # Default settings
 UVM_HOME="${UVM_HOME:-$HOME/.uvm}"
-UVM_SCRIPT_URL="https://raw.githubusercontent.com/your-org/uvm/main/uvm.sh"
+UVM_SCRIPT_URL="https://raw.githubusercontent.com/labwet/uvm/main/uvm.sh"
 UVM_SCRIPT_PATH="$UVM_HOME/uvm.sh"
 
 # Colors for output
