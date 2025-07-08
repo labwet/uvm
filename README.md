@@ -42,6 +42,25 @@ source ~/.bashrc  # or ~/.zshrc
 
 ## Usage
 
+### Quick Start
+```
+$ uvm install 3.4
+
+$ uvm ls
+* vere-v3.4
+
+$ uvm use 3.4
+Now using vere-v3.4
+
+$ source ~/.zshrc
+
+$ which urbit
+/Users/your-profile/.uvm/current/urbit
+
+$ urbit -R
+urbit 3.4
+```
+
 ### Basic Commands
 
 ```bash
@@ -77,6 +96,9 @@ uvm which vere-v3.4
 
 # Uninstall a version
 uvm uninstall vere-v3.4
+
+# Completely remove UVM (nuclear option)
+uvm nuke
 ```
 
 ### Version Aliases
@@ -169,6 +191,17 @@ uvm install vere-v3.4
 # Switch to it
 uvm use vere-v3.4
 
+# Verify it's available in PATH
+which urbit
+# Should show: /Users/your-username/.uvm/current/urbit
+
+# Run urbit directly (global command)
+urbit -R
+# Should show version info
+
+# Note: You may need to restart your terminal or run:
+# source ~/.zshrc (for zsh) or source ~/.bashrc (for bash)
+
 # Set as default
 uvm default vere-v3.4
 ```
@@ -200,6 +233,20 @@ uvm run vere-v3.4 --help
 uvm exec vere-v3.4 which urbit
 ```
 
+## Uninstalling UVM
+
+To completely remove UVM and all its artifacts:
+
+```bash
+uvm nuke
+```
+
+This will:
+- Remove the `~/.uvm` directory and all installed versions
+- Remove UVM configuration from your shell profiles (`.bashrc`, `.zshrc`, etc.)
+- Remove the UVM wrapper from `/usr/local/bin/uvm` (if exists)
+- Create backups of your shell profiles before modification
+
 ## Troubleshooting
 
 ### Common Issues
@@ -208,6 +255,18 @@ uvm exec vere-v3.4 which urbit
 2. **Command Not Found**: Restart your shell or source your profile
 3. **Download Fails**: Check internet connection and GitHub API rate limits
 4. **Version Not Found**: Verify version exists with `uvm ls-remote`
+5. **`which urbit` returns nothing**: Make sure you've run `uvm use <version>` and restart your shell
+6. **`urbit` command not found**: Verify your shell integration is working:
+   ```bash
+   echo $UVM_HOME  # Should show ~/.uvm
+   ls -la ~/.uvm/current  # Should show symlink to active version
+   echo $PATH | grep uvm  # Should show ~/.uvm/current in PATH
+   ```
+   
+   If the PATH doesn't include UVM:
+   - Restart your terminal completely
+   - Or run: `source ~/.zshrc` (zsh) or `source ~/.bashrc` (bash)
+   - Verify you've run `uvm use <version>` to set a current version
 
 ### Debug Mode
 

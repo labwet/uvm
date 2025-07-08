@@ -143,9 +143,9 @@ setup_shell_integration() {
     fi
     
     # Check if UVM is already in the profile
-    if grep -q "# UVM" "$profile_file"; then
-        warn "UVM already appears to be configured in $profile_file"
-        warn "You may need to remove old configuration manually"
+    if grep -q "# UVM (Urbit Version Manager)" "$profile_file"; then
+        log "UVM configuration already exists in $profile_file"
+        return 0
     fi
     
     # Add UVM configuration based on shell
@@ -157,36 +157,10 @@ setup_shell_integration() {
 export UVM_HOME="$UVM_HOME"
 [ -s "\$UVM_HOME/uvm.sh" ] && source "\$UVM_HOME/uvm.sh"
 
-# Add UVM current version to PATH
-if [ -L "\$UVM_HOME/current" ]; then
+# Explicitly add UVM current to PATH if it exists
+if [ -L "\$UVM_HOME/current" ] && [ -d "\$UVM_HOME/current" ]; then
     export PATH="\$UVM_HOME/current:\$PATH"
 fi
-
-# Auto-switch versions based on .uvmrc
-uvm_auto_switch() {
-    if [ -f ".uvmrc" ]; then
-        local required_version=\$(cat .uvmrc | tr -d '\\n\\r')
-        local current_version=\$(uvm current 2>/dev/null || echo "none")
-        
-        if [ "\$required_version" != "\$current_version" ]; then
-            if [ -d "\$UVM_HOME/versions/\$required_version" ]; then
-                uvm use "\$required_version"
-            else
-                echo "UVM: .uvmrc specifies \$required_version, but it's not installed"
-                echo "UVM: Run 'uvm install \$required_version' to install it"
-            fi
-        fi
-    fi
-}
-
-# Hook into cd command for auto-switching
-cd() {
-    builtin cd "\$@"
-    uvm_auto_switch
-}
-
-# Run auto-switch on shell startup
-uvm_auto_switch
 EOF
             ;;
         fish)
@@ -226,18 +200,62 @@ show_manual_setup_instructions() {
 create_uvm_command() {
     local uvm_wrapper_path="/usr/local/bin/uvm"
     
+    # Try to create /usr/local/bin if it doesn't exist
+    if [ ! -d "/usr/local/bin" ]; then
+        if sudo mkdir -p "/usr/local/bin" 2>/dev/null; then
+            log "Created /usr/local/bin directory"
+        else
+            warn "Cannot create /usr/local/bin directory"
+            return 1
+        fi
+    fi
+    
     # Check if we can write to /usr/local/bin
-    if [ -w "/usr/local/bin" ]; then
+    if [ -w "/usr/local/bin" ] || sudo test -w "/usr/local/bin" 2>/dev/null; then
         log "Creating uvm command wrapper..."
-        cat > "$uvm_wrapper_path" << EOF
-#!/bin/bash
-exec "$UVM_SCRIPT_PATH" "\$@"
-EOF
-        chmod +x "$uvm_wrapper_path"
+        
+        # Create wrapper script
+        local wrapper_content="#!/bin/bash
+exec \"$UVM_SCRIPT_PATH\" \"\$@\""
+        
+        if [ -w "/usr/local/bin" ]; then
+            echo "$wrapper_content" > "$uvm_wrapper_path"
+            chmod +x "$uvm_wrapper_path"
+        else
+            echo "$wrapper_content" | sudo tee "$uvm_wrapper_path" > /dev/null
+            sudo chmod +x "$uvm_wrapper_path"
+        fi
+        
         log "Created uvm command at $uvm_wrapper_path"
+        return 0
     else
         warn "Cannot write to /usr/local/bin"
-        warn "You can create an alias: alias uvm='$UVM_SCRIPT_PATH'"
+        warn "Adding alias to shell profile instead..."
+        add_alias_to_profile
+        return 1
+    fi
+}
+
+# Add alias to shell profile
+add_alias_to_profile() {
+    local shell_name profile_file
+    
+    shell_name=$(detect_shell)
+    profile_file=$(get_shell_profile "$shell_name")
+    
+    if [ -n "$profile_file" ]; then
+        # Check if alias already exists
+        if ! grep -q "alias uvm=" "$profile_file" 2>/dev/null; then
+            echo "" >> "$profile_file"
+            echo "# UVM alias" >> "$profile_file"
+            echo "alias uvm='$UVM_SCRIPT_PATH'" >> "$profile_file"
+            log "Added uvm alias to $profile_file"
+        else
+            log "UVM alias already exists in $profile_file"
+        fi
+    else
+        warn "Could not determine shell profile. Please manually add:"
+        warn "  alias uvm='$UVM_SCRIPT_PATH'"
     fi
 }
 
@@ -256,11 +274,20 @@ main() {
     create_uvm_directories
     install_uvm_script
     setup_shell_integration
-    create_uvm_command
     
-    log "UVM installation completed!"
-    log "Please restart your shell or run: source ~/.bashrc (or your shell profile)"
-    log "Then you can use 'uvm --help' to get started"
+    # Try to create uvm command wrapper
+    if ! create_uvm_command; then
+        log "UVM installation completed!"
+        log "UVM alias has been added to your shell profile."
+        log "To use UVM immediately, run:"
+        log "  source ~/.zshrc     # for zsh"
+        log "  source ~/.bashrc    # for bash"
+        log "Or restart your terminal and then run 'uvm help' to get started"
+    else
+        log "UVM installation completed!"
+        log "Please restart your shell or run: source ~/.zshrc (or your shell profile)"
+        log "Then you can use 'uvm help' to get started"
+    fi
 }
 
 # Run main installation

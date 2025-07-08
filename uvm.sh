@@ -3,8 +3,6 @@
 # UVM (Urbit Version Manager)
 # A POSIX-compliant tool for managing urbit/vere versions
 
-set -e
-
 # Constants
 UVM_VERSION="1.0.0"
 UVM_HOME="${UVM_HOME:-$HOME/.uvm}"
@@ -30,6 +28,7 @@ Usage:
   uvm ls                        List installed versions
   uvm ls-remote                 List available remote versions
   uvm uninstall <version>       Remove version
+  uvm nuke                      Remove UVM and all its artifacts
   uvm run <version> [args]      Run urbit with specific version
   uvm exec <version> <command>  Execute command with version in PATH
   uvm default <version>         Set global default version
@@ -160,11 +159,29 @@ uvm_install() {
     fi
     
     # Find the download URL for the specific version and platform
-    download_url=$(echo "$releases_json" | \
-        grep -A 20 "\"tag_name\":[[:space:]]*\"$version\"" | \
-        grep -o "\"browser_download_url\":[[:space:]]*\"[^\"]*${platform_arch}[^\"]*\"" | \
-        cut -d'"' -f4 | \
-        head -1)
+    # Try jq first if available, otherwise use grep/sed
+    if command -v jq >/dev/null 2>&1; then
+        download_url=$(echo "$releases_json" | jq -r ".[] | select(.tag_name == \"$version\") | .assets[] | select(.name | contains(\"$platform_arch\")) | .browser_download_url" | head -1)
+    else
+        # Fallback to grep/sed approach - look for the entire release block
+        download_url=$(echo "$releases_json" | \
+            sed -n "/\"tag_name\":[[:space:]]*\"$version\"/,/\"tag_name\":[[:space:]]*\"/p" | \
+            grep "\"browser_download_url\":" | \
+            grep "$platform_arch" | \
+            sed 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/' | \
+            head -1)
+    fi
+    
+    # Debug output
+    if [ -z "$download_url" ]; then
+        echo "Debug: version=$version, platform_arch=$platform_arch" >&2
+        echo "Debug: Checking if version exists in releases..." >&2
+        if echo "$releases_json" | grep -q "\"tag_name\":[[:space:]]*\"$version\""; then
+            echo "Debug: Version found in releases" >&2
+        else
+            echo "Debug: Version NOT found in releases" >&2
+        fi
+    fi
     
     if [ -z "$download_url" ]; then
         echo "Error: No binary found for $version on $platform_arch" >&2
@@ -205,7 +222,7 @@ uvm_install() {
     
     # Extract to version directory
     mkdir -p "$version_dir"
-    if ! tar -xzf "$temp_dir/vere.tgz" -C "$version_dir" --strip-components=1 2>/dev/null; then
+    if ! tar -xzf "$temp_dir/vere.tgz" -C "$version_dir" 2>/dev/null; then
         echo "Error: Failed to extract $version" >&2
         rm -rf "$temp_dir" "$version_dir"
         exit 1
@@ -219,7 +236,7 @@ uvm_install() {
     
     # Validate installation and create urbit symlink
     local vere_binary
-    vere_binary=$(find "$version_dir" -name "vere" -type f -executable | head -1)
+    vere_binary=$(find "$version_dir" -name "vere*" -type f -perm +111 | head -1)
     
     if [ -z "$vere_binary" ]; then
         echo "Error: vere binary not found after installation" >&2
@@ -229,6 +246,9 @@ uvm_install() {
     
     # Create urbit symlink for the binary
     ln -sf "$(basename "$vere_binary")" "$version_dir/urbit"
+    
+    # Also create a vere symlink for compatibility
+    ln -sf "$(basename "$vere_binary")" "$version_dir/vere"
     
     # Test that binary works
     if ! "$vere_binary" --help >/dev/null 2>&1; then
@@ -549,6 +569,107 @@ uvm_unalias() {
     echo "Alias '$name' removed"
 }
 
+uvm_nuke() {
+    echo "This will completely remove UVM and all its artifacts."
+    echo "The following will be deleted:"
+    echo "  - UVM directory: $UVM_HOME"
+    echo "  - Shell configuration in your profile"
+    echo "  - UVM wrapper in /usr/local/bin/uvm (if exists)"
+    echo ""
+    read -p "Are you sure you want to continue? (y/N): " -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Uninstall cancelled."
+        return 0
+    fi
+    
+    echo "Removing UVM..."
+    
+    # Remove UVM directory
+    if [ -d "$UVM_HOME" ]; then
+        rm -rf "$UVM_HOME"
+        echo "✓ Removed UVM directory: $UVM_HOME"
+    fi
+    
+    # Remove wrapper from /usr/local/bin
+    if [ -f "/usr/local/bin/uvm" ]; then
+        if [ -w "/usr/local/bin" ]; then
+            rm -f "/usr/local/bin/uvm"
+            echo "✓ Removed UVM wrapper: /usr/local/bin/uvm"
+        else
+            sudo rm -f "/usr/local/bin/uvm" 2>/dev/null && echo "✓ Removed UVM wrapper: /usr/local/bin/uvm"
+        fi
+    fi
+    
+    # Remove shell configuration
+    local shell_profiles=("$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.config/fish/config.fish")
+    
+    for profile in "${shell_profiles[@]}"; do
+        if [ -f "$profile" ]; then
+            # Create backup
+            cp "$profile" "$profile.backup.uvm.$(date +%Y%m%d_%H%M%S)"
+            
+            # Remove UVM configuration
+            awk '
+            /^# UVM \(Urbit Version Manager\)/ { 
+                in_uvm = 1
+                next
+            }
+            in_uvm && /^[[:space:]]*$/ {
+                next
+            }
+            in_uvm && /^[[:space:]]*#/ {
+                next
+            }
+            in_uvm && /^[[:space:]]*export/ {
+                next
+            }
+            in_uvm && /^[[:space:]]*\[/ {
+                next
+            }
+            in_uvm && /^[[:space:]]*alias uvm=/ {
+                in_uvm = 0
+                next
+            }
+            in_uvm && /^# Explicitly add UVM current to PATH/ {
+                next
+            }
+            in_uvm && /^if.*UVM_HOME.*current.*then/ {
+                bracket_count = 1
+                next
+            }
+            in_uvm && bracket_count > 0 && /fi/ {
+                bracket_count--
+                if (bracket_count == 0) {
+                    in_uvm = 0
+                }
+                next
+            }
+            in_uvm && bracket_count > 0 {
+                next
+            }
+            !in_uvm { print }
+            ' "$profile" > "$profile.tmp"
+            
+            # Check if anything was actually removed
+            if ! diff -q "$profile" "$profile.tmp" >/dev/null 2>&1; then
+                mv "$profile.tmp" "$profile"
+                echo "✓ Removed UVM configuration from: $profile"
+            else
+                rm -f "$profile.tmp"
+            fi
+        fi
+    done
+    
+    echo ""
+    echo "UVM has been completely uninstalled."
+    echo "Backups of your shell profiles were created with .backup.uvm.* extensions."
+    echo "Please restart your shell or source your profile to complete the removal."
+    echo ""
+    echo "Thank you for using UVM!"
+}
+
 uvm_read_uvmrc() {
     local uvmrc_file=".uvmrc"
     if [ -f "$uvmrc_file" ]; then
@@ -567,6 +688,7 @@ main() {
         ls) uvm_ls ;;
         ls-remote) uvm_ls_remote ;;
         uninstall) uvm_uninstall "$2" ;;
+        nuke) uvm_nuke ;;
         run) uvm_run "$2" "$@" ;;
         exec) uvm_exec "$2" "$@" ;;
         default) uvm_default "$2" ;;
@@ -584,55 +706,19 @@ main() {
 
 # Shell integration functions
 uvm_init() {
-    # Set up PATH to include current version
-    if [ -L "$UVM_CURRENT_LINK" ]; then
-        export PATH="$UVM_CURRENT_LINK:$PATH"
-    fi
-    
-    # Set up auto-switching based on .uvmrc
-    if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
-        # Define the auto-switch function
-        uvm_auto_switch() {
-            if [ -f ".uvmrc" ]; then
-                local required_version
-                required_version=$(cat .uvmrc | tr -d '\n\r')
-                
-                if [ -n "$required_version" ]; then
-                    local current_version
-                    current_version=$(uvm_current_version)
-                    
-                    if [ "$required_version" != "$current_version" ]; then
-                        local parsed_version
-                        parsed_version=$(uvm_parse_version "$required_version")
-                        
-                        if [ -d "$UVM_VERSIONS_DIR/$parsed_version" ]; then
-                            uvm use "$required_version" >/dev/null
-                        fi
-                    fi
-                fi
-            fi
-        }
-        
-        # Hook into cd command
-        if [ -n "$BASH_VERSION" ]; then
-            # Bash version
-            uvm_cd() {
-                builtin cd "$@"
-                uvm_auto_switch
-            }
-            alias cd=uvm_cd
-        elif [ -n "$ZSH_VERSION" ]; then
-            # Zsh version
-            chpwd_functions+=(uvm_auto_switch)
+    # Only set up PATH to include current version
+    if [ -L "$UVM_CURRENT_LINK" ] && [ -d "$UVM_CURRENT_LINK" ]; then
+        # Check if already in PATH to avoid duplicates
+        if ! echo "$PATH" | grep -q "$UVM_CURRENT_LINK"; then
+            export PATH="$UVM_CURRENT_LINK:$PATH"
         fi
-        
-        # Run auto-switch on shell startup
-        uvm_auto_switch
     fi
 }
 
 # Only run main if script is executed directly
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    # Enable exit on error for command execution
+    set -e
     main "$@"
 else
     # Script is being sourced, initialize shell integration
