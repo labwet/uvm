@@ -42,25 +42,6 @@ source ~/.bashrc  # or ~/.zshrc
 
 ## Usage
 
-### Quick Start
-```
-$ uvm install 3.4
-
-$ uvm ls
-* vere-v3.4
-
-$ uvm use 3.4
-Now using vere-v3.4
-
-$ source ~/.zshrc
-
-$ which urbit
-/Users/your-profile/.uvm/current/urbit
-
-$ urbit -R
-urbit 3.4
-```
-
 ### Basic Commands
 
 ```bash
