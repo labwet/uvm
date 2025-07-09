@@ -291,4 +291,4 @@ MIT License - see LICENSE file for details.
 ## Acknowledgments
 
 - Inspired by [nvm](https://github.com/nvm-sh/nvm)
-- Uses the [urbit/vere](https://github.com/urbit/vere) release API
+- Uses [GitHub's REST API](https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28)
